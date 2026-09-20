@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  python-test
+
+  Sample SAM Template for python-test
+
+Parameters:
+  AllowedIpAddress:
+    Type: String
+    Description: "CIDR allowed to invoke the API. Supplied via .env from deploy.sh"
+    NoEcho: false
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+
+    Tracing: Active
+    # You can add LoggingConfig parameters such as the Logformat, Log Group, and SystemLogLevel or ApplicationLogLevel. Learn more here https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-function.html#sam-function-loggingconfig.
+    LoggingConfig:
+      LogFormat: JSON
+  Api:
+    TracingEnabled: true
+    Auth:
+      ResourcePolicy:
+        #IpRangeWhitelist:
+        #  - !Ref AllowedIpAddress
+        CustomStatements:
+          - Effect: Allow
+            Principal: '*'
+            Action: 'execute-api:Invoke'
+            Resource: 'execute-api:/*'
+            Condition:
+              IpAddress:
+                aws:SourceIp:
+                  - !Ref AllowedIpAddress
+Resources:
+  HelloWorldFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: hello_world/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Architectures:
+        - x86_64
+      Events:
+        HelloWorld:
+          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            Path: /hello
+            Method: get
+            Auth:
+              ApiKeyRequired: true
+      Tracing: Active
+      Layers:
+        - arn:aws:lambda:us-east-1:615299751070:layer:AWSOpenTelemetryDistroPython:30
+      Policies:
+        - arn:aws:iam::aws:policy/CloudWatchLambdaApplicationSignalsExecutionRolePolicy
+        - AWSXRayDaemonWriteAccess
+      Environment:
+        Variables:
+          AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
+          OTEL_PYTHON_DISTRO: aws_distro
+          OTEL_PYTHON_CONFIGURATOR: aws_configurator
+
+  # API Key for usage plan
+  ApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    DependsOn:
+      - ServerlessRestApiProdStage
+    Properties:
+      Name: python-test-api-key
+      Description: API Key for rate limiting
+      Enabled: true
+
+  # Usage Plan with 10 requests per day
+  ApiUsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    DependsOn:
+      - ServerlessRestApiProdStage
+    Properties:
+      UsagePlanName: DailyUsagePlan
+      Description: Usage plan with 10 requests per day
+      ApiStages:
+        - ApiId: !Ref ServerlessRestApi
+          Stage: Prod
+      Quota:
+        Limit: 10
+        Period: DAY
+      Throttle:
+        BurstLimit: 2
+        RateLimit: 1
+
+  # Link API Key to Usage Plan
+  ApiUsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref ApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref ApiUsagePlan
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  HelloWorldApi:
+    Description: API Gateway endpoint URL for Prod stage for Hello World 
+      function
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/Prod/hello/"
+  HelloWorldFunction:
+    Description: Hello World Lambda Function ARN
+    Value: !GetAtt HelloWorldFunction.Arn
+  HelloWorldFunctionIamRole:
+    Description: Implicit IAM Role created for Hello World function
+    Value: !GetAtt HelloWorldFunctionRole.Arn
+  ApiKeyId:
+    Description: API Key ID for usage plan
+    Value: !Ref ApiKey

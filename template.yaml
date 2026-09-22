@@ -10,6 +10,27 @@ Parameters:
     Type: String
     Description: "CIDR allowed to invoke the API. Supplied via .env from deploy.sh"
     NoEcho: false
+  
+  GitHubOrg:
+    Type: String
+    Description: "GitHub organization or username"
+    Default: "p-whittney"
+  
+  GitHubRepo:
+    Type: String
+    Description: "GitHub repository name"
+    Default: "aws-lambda-sam-test"
+  
+  CreateGitHubActionsRole:
+    Type: String
+    Description: "Whether to create the GitHub Actions IAM role (set to 'false' after first deployment if managing separately)"
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+
+Conditions:
+  ShouldCreateGitHubActionsRole: !Equals [!Ref CreateGitHubActionsRole, "true"]
 
 # More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
@@ -100,6 +121,151 @@ Resources:
       KeyType: API_KEY
       UsagePlanId: !Ref ApiUsagePlan
 
+  # NOTE: The OIDC provider must already exist in your AWS account.
+  
+  # IAM Policy for GitHub Actions to deploy SAM applications
+  GitHubActionsSAMDeployPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: ShouldCreateGitHubActionsRole
+    Properties:
+      ManagedPolicyName: !Sub "${AWS::StackName}-GitHubActionsSAMDeployPolicy"
+      Description: "Policy for GitHub Actions to deploy SAM applications"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFormationAccess
+            Effect: Allow
+            Action:
+              - cloudformation:CreateChangeSet
+              - cloudformation:CreateStack
+              - cloudformation:DeleteChangeSet
+              - cloudformation:DeleteStack
+              - cloudformation:DescribeChangeSet
+              - cloudformation:DescribeStackEvents
+              - cloudformation:DescribeStackResource
+              - cloudformation:DescribeStackResources
+              - cloudformation:DescribeStacks
+              - cloudformation:ExecuteChangeSet
+              - cloudformation:GetTemplate
+              - cloudformation:GetTemplateSummary
+              - cloudformation:ListStackResources
+              - cloudformation:UpdateStack
+              - cloudformation:ListStacks
+            Resource: "*"
+          
+          - Sid: S3Access
+            Effect: Allow
+            Action:
+              - s3:CreateBucket
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:ListBucket
+              - s3:GetBucketLocation
+              - s3:PutBucketVersioning
+              - s3:PutBucketPublicAccessBlock
+              - s3:PutEncryptionConfiguration
+            Resource:
+              - arn:aws:s3:::aws-sam-cli-managed-default-*
+              - arn:aws:s3:::aws-sam-cli-managed-default-*/*
+          
+          - Sid: LambdaAccess
+            Effect: Allow
+            Action:
+              - lambda:CreateFunction
+              - lambda:DeleteFunction
+              - lambda:GetFunction
+              - lambda:GetFunctionConfiguration
+              - lambda:ListTags
+              - lambda:TagResource
+              - lambda:UntagResource
+              - lambda:UpdateFunctionCode
+              - lambda:UpdateFunctionConfiguration
+              - lambda:AddPermission
+              - lambda:RemovePermission
+              - lambda:InvokeFunction
+            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:*"
+          
+          - Sid: IAMAccess
+            Effect: Allow
+            Action:
+              - iam:CreateRole
+              - iam:DeleteRole
+              - iam:GetRole
+              - iam:PassRole
+              - iam:AttachRolePolicy
+              - iam:DetachRolePolicy
+              - iam:PutRolePolicy
+              - iam:DeleteRolePolicy
+              - iam:GetRolePolicy
+              - iam:TagRole
+              - iam:UntagRole
+            Resource:
+              - !Sub "arn:aws:iam::${AWS::AccountId}:role/${AWS::StackName}-*"
+              - !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-sam-cli-managed-*"
+          
+          - Sid: IAMPolicyAccess
+            Effect: Allow
+            Action:
+              - iam:CreatePolicy
+              - iam:DeletePolicy
+              - iam:GetPolicy
+              - iam:GetPolicyVersion
+              - iam:ListPolicyVersions
+              - iam:CreatePolicyVersion
+              - iam:DeletePolicyVersion
+              - iam:TagPolicy
+              - iam:UntagPolicy
+            Resource: !Sub "arn:aws:iam::${AWS::AccountId}:policy/*"
+          
+          - Sid: APIGatewayAccess
+            Effect: Allow
+            Action:
+              - apigateway:*
+            Resource: "*"
+          
+          - Sid: LogsAccess
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:DeleteLogGroup
+              - logs:DescribeLogGroups
+              - logs:PutRetentionPolicy
+              - logs:TagLogGroup
+              - logs:UntagLogGroup
+            Resource: "*"
+  
+  # IAM Role that GitHub Actions will assume
+  GitHubActionsDeployRole:
+    Type: AWS::IAM::Role
+    Condition: ShouldCreateGitHubActionsRole
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-GitHubActionsDeployRole"
+      Description: "Role for GitHub Actions to deploy SAM applications via OIDC"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+              StringLike:
+                "token.actions.githubusercontent.com:sub":
+                  - !Sub "repo:${GitHubOrg}@*/${GitHubRepo}@*:*"
+                  - !Sub "repo:${GitHubOrg}@*/${GitHubRepo}@*:environment:*"
+                  - !Sub "repo:${GitHubOrg}/${GitHubRepo}:*"
+                  - !Sub "repo:${GitHubOrg}/${GitHubRepo}:environment:*"
+      ManagedPolicyArns:
+        - !Ref GitHubActionsSAMDeployPolicy
+      Tags:
+        - Key: Purpose
+          Value: GitHubActions
+        - Key: Repository
+          Value: !Sub "${GitHubOrg}/${GitHubRepo}"
+
 Outputs:
   # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
   # Find out more about other implicit resources you can reference within SAM
@@ -117,3 +283,8 @@ Outputs:
   ApiKeyId:
     Description: API Key ID for usage plan
     Value: !Ref ApiKey
+  
+  GitHubActionsRoleArn:
+    Description: IAM Role ARN for GitHub Actions (add this to GitHub secrets as AWS_ROLE_TO_ASSUME)
+    Condition: ShouldCreateGitHubActionsRole
+    Value: !GetAtt GitHubActionsDeployRole.Arn

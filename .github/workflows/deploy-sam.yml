@@ -64,4 +64,6 @@ jobs:
             --no-fail-on-empty-changeset \
             --resolve-s3 \
             --s3-prefix ${{ env.SAM_STACK_NAME }} \
-            --parameter-overrides AllowedIpAddress=${{ secrets.ALLOWED_IP_ADDRESS || '0.0.0.0/0' }}
+            --no-progressbar \
+            --parameter-overrides AllowedIpAddress=${{ secrets.ALLOWED_IP_ADDRESS || '0.0.0.0/0' }} > /dev/null
+          echo "✅ Deployment completed successfully"

@@ -71,6 +71,6 @@ def lambda_handler(event, context):
             "body": json.dumps({
                 "message": message,
                 "location": location,
-                "version": "v1.1"
+                "version": "v1.2"
             }),
         }

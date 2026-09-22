@@ -5,12 +5,10 @@ on:
     branches:
       - main
       - deploy
-      - deploy-oidc
   pull_request:
     branches:
       - main
       - deploy
-      - deploy-oidc
   workflow_dispatch:
 
 env:
@@ -28,6 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     # Only deploy on push to main, not on PRs
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    environment:
+      name: production
+      url: https://github.com/${{ github.repository }}
     
     steps:
       - name: Checkout code
@@ -64,12 +65,3 @@ jobs:
             --resolve-s3 \
             --s3-prefix ${{ env.SAM_STACK_NAME }} \
             --parameter-overrides AllowedIpAddress=${{ secrets.ALLOWED_IP_ADDRESS || '0.0.0.0/0' }}
-
-      - name: Get Stack Outputs
-        run: |
-          echo "### Deployment Outputs" >> $GITHUB_STEP_SUMMARY
-          aws cloudformation describe-stacks \
-            --stack-name ${{ env.SAM_STACK_NAME }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Stacks[0].Outputs[*].[OutputKey,OutputValue]' \
-            --output table >> $GITHUB_STEP_SUMMARY
